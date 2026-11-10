@@ -1,0 +1,15 @@
+[package]
+name = "howdah"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Typed Postgres queries for Rust"
+license = "MIT"
+authors = ["Revanth Pothukuchi"]
+readme = "README.md"
+repository = "https://github.com/Hacker-007/howdah"
+keywords = ["postgres", "sql", "query-builder", "typed", "tokio-postgres"]
+categories = ["database"]
+exclude = [".gitignore", "DESIGN.md"]
+
+[dependencies]
