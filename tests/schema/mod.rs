@@ -1,6 +1,6 @@
 // The tables used by the tests.
 
-use howdah::{Column, Handle, Table};
+use howdah::{Column, Handle, Nullable, Table};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Users;
@@ -16,6 +16,7 @@ pub trait UsersColumns {
     fn name(&self) -> Column<String>;
     fn email(&self) -> Column<String>;
     fn active(&self) -> Column<bool>;
+    fn manager_id(&self) -> Column<i64, Nullable>;
 }
 
 impl UsersColumns for Handle<Users> {
@@ -33,5 +34,9 @@ impl UsersColumns for Handle<Users> {
 
     fn active(&self) -> Column<bool> {
         Column::new(*self, "active")
+    }
+
+    fn manager_id(&self) -> Column<i64, Nullable> {
+        Column::new(*self, "manager_id")
     }
 }

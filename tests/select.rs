@@ -38,6 +38,16 @@ fn tuples_nest() {
 }
 
 #[test]
+fn nullable_columns_read_as_option() {
+    let (q, u) = from(Users);
+    let s: Select<(String, Option<i64>)> = q.select((u.name(), u.manager_id()));
+    assert_eq!(
+        s.to_sql(),
+        r#"SELECT "users"."name", "users"."manager_id" FROM "users""#
+    );
+}
+
+#[test]
 fn one_query_gives_several_selects() {
     let (q, u) = from(Users);
     let ids: Select<i64> = q.select(u.id());

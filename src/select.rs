@@ -2,7 +2,7 @@
 
 use std::marker::PhantomData;
 
-use crate::expr::{Column, Node};
+use crate::expr::{Column, NeverNull, Node, Nullable};
 use crate::render;
 
 /// A select statement. `R` is the type of each row it returns: `()` until
@@ -64,8 +64,16 @@ pub trait Selection {
     fn push_columns(self, into: &mut Vec<Node>);
 }
 
-impl<T> Selection for Column<T> {
+impl<T> Selection for Column<T, NeverNull> {
     type Row = T;
+
+    fn push_columns(self, into: &mut Vec<Node>) {
+        into.push(self.node());
+    }
+}
+
+impl<T> Selection for Column<T, Nullable> {
+    type Row = Option<T>;
 
     fn push_columns(self, into: &mut Vec<Node>) {
         into.push(self.node());

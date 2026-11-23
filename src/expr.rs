@@ -20,13 +20,20 @@ pub enum Node {
     Column(ColumnRef),
 }
 
-/// A column of one [`Handle`], holding values of type `T`.
-pub struct Column<T> {
+/// The value can never be null.
+pub struct NeverNull;
+
+/// The value may be null.
+pub struct Nullable;
+
+/// A column of one [`Handle`], holding values of type `T`. `N` is [`Nullable`]
+/// for a column that can hold null.
+pub struct Column<T, N = NeverNull> {
     column: ColumnRef,
-    _type: PhantomData<fn() -> T>,
+    _type: PhantomData<fn() -> (T, N)>,
 }
 
-impl<T> Column<T> {
+impl<T, N> Column<T, N> {
     #[doc(hidden)]
     pub fn new<S: Table>(_handle: Handle<S>, name: &'static str) -> Self {
         Self {
@@ -43,10 +50,10 @@ impl<T> Column<T> {
     }
 }
 
-impl<T> Clone for Column<T> {
+impl<T, N> Clone for Column<T, N> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T> Copy for Column<T> {}
+impl<T, N> Copy for Column<T, N> {}

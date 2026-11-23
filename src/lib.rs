@@ -5,7 +5,7 @@ mod render;
 mod select;
 mod table;
 
-pub use expr::Column;
+pub use expr::{Column, NeverNull, Nullable};
 pub use select::{Select, Selection};
 pub use table::{Handle, Table};
 
