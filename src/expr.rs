@@ -4,15 +4,19 @@ use std::marker::PhantomData;
 
 use crate::table::{Handle, Table};
 
-/// A column with its type removed.
+/// A column with its type removed. `pub` for the same reason as [`Node`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ColumnRef {
+pub struct ColumnRef {
     pub(crate) table: &'static str,
     pub(crate) name: &'static str,
 }
 
+/// An expression with its types removed.
+///
+/// It is `pub` only so that the public [`Selection`](crate::Selection) trait
+/// can name it. This module is private, so no other crate can.
 #[derive(Debug, Clone)]
-pub(crate) enum Node {
+pub enum Node {
     Column(ColumnRef),
 }
 

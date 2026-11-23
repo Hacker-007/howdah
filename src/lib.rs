@@ -6,20 +6,11 @@ mod select;
 mod table;
 
 pub use expr::Column;
-pub use select::{Query, Select};
+pub use select::{Select, Selection};
 pub use table::{Handle, Table};
 
-use crate::select::SelectAst;
-
-/// Starts a select from `table`. Returns the query and the handle of the
-/// table, whose columns the query can then use.
-pub fn from<T: Table>(_table: T) -> (Query, Handle<T>) {
-    let query = Query {
-        ast: SelectAst {
-            from: T::NAME,
-            columns: Vec::new(),
-        },
-    };
-
-    (query, Handle::new())
+/// Starts a select from `table`. Returns the select and the handle of the
+/// table, whose columns the select can then use.
+pub fn from<T: Table>(_table: T) -> (Select, Handle<T>) {
+    (Select::new(T::NAME), Handle::new())
 }

@@ -1,7 +1,7 @@
 //! Writing SQL.
 
 use crate::expr::Node;
-use crate::select::SelectAst;
+use crate::select::Select;
 
 struct Writer {
     sql: String,
@@ -28,22 +28,19 @@ impl Writer {
 impl Default for Writer {
     fn default() -> Self {
         Self {
-            sql: "SELECT ".to_string(),
+            sql: "SELECT".to_string(),
         }
     }
 }
 
-pub(crate) fn select(ast: &SelectAst) -> String {
+pub(crate) fn select<R>(select: &Select<R>) -> String {
     let mut w = Writer::default();
-    for (i, column) in ast.columns.iter().enumerate() {
-        if i > 0 {
-            w.sql.push_str(", ");
-        }
-
+    for (i, column) in select.columns.iter().enumerate() {
+        w.sql.push_str(if i == 0 { " " } else { ", " });
         w.node(column);
     }
 
     w.sql.push_str(" FROM ");
-    w.ident(ast.from);
+    w.ident(select.from);
     w.sql
 }
