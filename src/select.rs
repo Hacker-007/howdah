@@ -2,22 +2,26 @@
 
 use std::marker::PhantomData;
 
+use crate::error::Error;
 use crate::expr::{Column, NeverNull, Node, Nullable};
 use crate::render;
+use crate::table::SourceId;
 
 /// A select statement. `R` is the type of each row it returns: `()` until
 /// [`select`](Select::select) chooses the columns.
 ///
 /// A select is an ordinary value: it can be cloned, stored and returned.
 pub struct Select<R = ()> {
+    pub(crate) source: SourceId,
     pub(crate) from: &'static str,
     pub(crate) columns: Vec<Node>,
     _row: PhantomData<fn() -> R>,
 }
 
 impl Select {
-    pub(crate) fn new(from: &'static str) -> Self {
+    pub(crate) fn new(source: SourceId, from: &'static str) -> Self {
         Self {
+            source,
             from,
             columns: Vec::new(),
             _row: PhantomData,
@@ -33,6 +37,7 @@ impl<R> Select<R> {
         columns.push_columns(&mut nodes);
 
         Select {
+            source: self.source,
             from: self.from,
             columns: nodes,
             _row: PhantomData,
@@ -40,7 +45,9 @@ impl<R> Select<R> {
     }
 
     /// The statement's SQL.
-    pub fn to_sql(&self) -> String {
+    ///
+    /// Fails if a column's table is not part of the select.
+    pub fn to_sql(&self) -> Result<String, Error> {
         render::select(self)
     }
 }
@@ -48,6 +55,7 @@ impl<R> Select<R> {
 impl<R> Clone for Select<R> {
     fn clone(&self) -> Self {
         Self {
+            source: self.source,
             from: self.from,
             columns: self.columns.clone(),
             _row: PhantomData,

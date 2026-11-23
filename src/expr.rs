@@ -2,11 +2,12 @@
 
 use std::marker::PhantomData;
 
-use crate::table::{Handle, Table};
+use crate::table::{Handle, SourceId, Table};
 
 /// A column with its type removed. `pub` for the same reason as [`Node`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColumnRef {
+    pub(crate) source: SourceId,
     pub(crate) table: &'static str,
     pub(crate) name: &'static str,
 }
@@ -35,9 +36,10 @@ pub struct Column<T, N = NeverNull> {
 
 impl<T, N> Column<T, N> {
     #[doc(hidden)]
-    pub fn new<S: Table>(_handle: Handle<S>, name: &'static str) -> Self {
+    pub fn new<S: Table>(handle: Handle<S>, name: &'static str) -> Self {
         Self {
             column: ColumnRef {
+                source: handle.source(),
                 table: S::NAME,
                 name,
             },
