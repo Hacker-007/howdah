@@ -54,5 +54,11 @@ pub(crate) fn select<R>(select: &Select<R>) -> Result<String, Error> {
 
     w.sql.push_str(" FROM ");
     w.ident(select.from);
+
+    for (i, filter) in select.filters.iter().enumerate() {
+        w.sql.push_str(if i == 0 { " WHERE " } else { " AND " });
+        w.node(filter)?;
+    }
+
     Ok(w.sql)
 }

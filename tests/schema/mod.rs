@@ -17,6 +17,7 @@ pub trait UsersColumns {
     fn email(&self) -> Column<String>;
     fn active(&self) -> Column<bool>;
     fn manager_id(&self) -> Column<i64, Nullable>;
+    fn verified(&self) -> Column<bool, Nullable>;
 }
 
 impl UsersColumns for Handle<Users> {
@@ -38,5 +39,9 @@ impl UsersColumns for Handle<Users> {
 
     fn manager_id(&self) -> Column<i64, Nullable> {
         Column::new(*self, "manager_id")
+    }
+
+    fn verified(&self) -> Column<bool, Nullable> {
+        Column::new(*self, "verified")
     }
 }

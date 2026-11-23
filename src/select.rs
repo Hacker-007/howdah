@@ -15,6 +15,7 @@ pub struct Select<R = ()> {
     pub(crate) source: SourceId,
     pub(crate) from: &'static str,
     pub(crate) columns: Vec<Node>,
+    pub(crate) filters: Vec<Node>,
     _row: PhantomData<fn() -> R>,
 }
 
@@ -24,6 +25,7 @@ impl Select {
             source,
             from,
             columns: Vec::new(),
+            filters: Vec::new(),
             _row: PhantomData,
         }
     }
@@ -40,8 +42,16 @@ impl<R> Select<R> {
             source: self.source,
             from: self.from,
             columns: nodes,
+            filters: self.filters.clone(),
             _row: PhantomData,
         }
+    }
+
+    /// Keeps only the rows where `condition` is true. A row where it is null
+    /// is left out, as in SQL. Every filter must hold.
+    pub fn filter<N>(&mut self, condition: Column<bool, N>) -> &mut Self {
+        self.filters.push(condition.node());
+        self
     }
 
     /// The statement's SQL.
@@ -58,6 +68,7 @@ impl<R> Clone for Select<R> {
             source: self.source,
             from: self.from,
             columns: self.columns.clone(),
+            filters: self.filters.clone(),
             _row: PhantomData,
         }
     }
