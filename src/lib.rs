@@ -6,12 +6,14 @@ mod format;
 mod null;
 mod select;
 mod table;
+mod value;
 
 pub use error::Error;
-pub use expression::{Column, Expr, Expression};
+pub use expression::{Column, Expr, Expression, IntoExpression};
 pub use null::{NeverNull, Nullability, Nullable};
 pub use select::{Select, Selection};
 pub use table::{Handle, Table};
+pub use value::Value;
 
 /// Starts a select from `table`. Returns the select and the handle of the
 /// table, whose columns the select can then use.

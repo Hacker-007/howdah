@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 
 use crate::null::{NeverNull, Nullability};
 use crate::table::{Handle, SourceId, Table};
+use crate::value::Value;
 
 /// An expression holding values of type `T`, such as a comparison. `N` is
 /// [`Nullable`](crate::Nullable) if it can be null.
@@ -28,9 +29,6 @@ impl<T, N> Clone for Expr<T, N> {
 }
 
 /// An expression with its types removed.
-///
-/// It is `pub` only so that public traits such as [`Expression`] can name it.
-/// This module is private, so no other crate can.
 #[derive(Debug, Clone)]
 pub enum ErasedExpression {
     Column(ColumnRef),
@@ -39,6 +37,7 @@ pub enum ErasedExpression {
         left: Box<ErasedExpression>,
         right: Box<ErasedExpression>,
     },
+    Value(Value),
 }
 
 /// A column of one [`Handle`], holding values of type `T`. `N` is
@@ -70,8 +69,7 @@ impl<T, N> Clone for Column<T, N> {
 
 impl<T, N> Copy for Column<T, N> {}
 
-/// A column with its type removed. `pub` for the same reason as
-/// [`ErasedExpression`].
+/// A column with its type removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColumnRef {
     pub(crate) source: SourceId,
@@ -79,7 +77,7 @@ pub struct ColumnRef {
     pub(crate) name: &'static str,
 }
 
-/// A comparison operator. `pub` for the same reason as [`ErasedExpression`].
+/// A comparison operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompareOperation {
     Equal,
@@ -95,7 +93,7 @@ pub enum CompareOperation {
 ///
 /// Both sides of a comparison must have the same `Type`:
 ///
-/// ```compile_fail,E0271
+/// ```compile_fail,E0277
 /// # use howdah::{Column, Expression, Table, from};
 /// # #[derive(Clone, Copy)]
 /// # struct Users;
@@ -107,20 +105,17 @@ pub enum CompareOperation {
 /// let name: Column<String> = Column::new(u, "name");
 /// id.eq(name);
 /// ```
-pub trait Expression: Sized {
+pub trait Expression: Erase + Sized {
     /// The Rust type of the value.
     type Type;
 
     /// Whether the value can be null.
     type Null: Nullability;
 
-    #[doc(hidden)]
-    fn erase(self) -> ErasedExpression;
-
     /// `self = other`.
     fn eq<E>(self, other: E) -> Expr<bool, <Self::Null as Nullability>::Or<E::Null>>
     where
-        E: Expression<Type = Self::Type>,
+        E: IntoExpression<Self::Type>,
     {
         Expr::new(ErasedExpression::Compare {
             op: CompareOperation::Equal,
@@ -132,7 +127,7 @@ pub trait Expression: Sized {
     /// `self <> other`.
     fn ne<E>(self, other: E) -> Expr<bool, <Self::Null as Nullability>::Or<E::Null>>
     where
-        E: Expression<Type = Self::Type>,
+        E: IntoExpression<Self::Type>,
     {
         Expr::new(ErasedExpression::Compare {
             op: CompareOperation::NotEqual,
@@ -144,7 +139,7 @@ pub trait Expression: Sized {
     /// `self < other`.
     fn lt<E>(self, other: E) -> Expr<bool, <Self::Null as Nullability>::Or<E::Null>>
     where
-        E: Expression<Type = Self::Type>,
+        E: IntoExpression<Self::Type>,
     {
         Expr::new(ErasedExpression::Compare {
             op: CompareOperation::LessThan,
@@ -156,7 +151,7 @@ pub trait Expression: Sized {
     /// `self <= other`.
     fn le<E>(self, other: E) -> Expr<bool, <Self::Null as Nullability>::Or<E::Null>>
     where
-        E: Expression<Type = Self::Type>,
+        E: IntoExpression<Self::Type>,
     {
         Expr::new(ErasedExpression::Compare {
             op: CompareOperation::LessThanEqual,
@@ -168,7 +163,7 @@ pub trait Expression: Sized {
     /// `self > other`.
     fn gt<E>(self, other: E) -> Expr<bool, <Self::Null as Nullability>::Or<E::Null>>
     where
-        E: Expression<Type = Self::Type>,
+        E: IntoExpression<Self::Type>,
     {
         Expr::new(ErasedExpression::Compare {
             op: CompareOperation::GreaterThan,
@@ -180,7 +175,7 @@ pub trait Expression: Sized {
     /// `self >= other`.
     fn ge<E>(self, other: E) -> Expr<bool, <Self::Null as Nullability>::Or<E::Null>>
     where
-        E: Expression<Type = Self::Type>,
+        E: IntoExpression<Self::Type>,
     {
         Expr::new(ErasedExpression::Compare {
             op: CompareOperation::GreaterThanEqual,
@@ -193,16 +188,53 @@ pub trait Expression: Sized {
 impl<T, N: Nullability> Expression for Column<T, N> {
     type Type = T;
     type Null = N;
-
-    fn erase(self) -> ErasedExpression {
-        ErasedExpression::Column(self.column)
-    }
 }
 
 impl<T, N: Nullability> Expression for Expr<T, N> {
     type Type = T;
     type Null = N;
+}
 
+/// What can stand where an expression of type `T` is expected: a column or
+/// expression of type `T`, or a Rust value, which is sent as a parameter.
+/// An integer literal becomes whichever integer type `T` is.
+///
+/// A Rust value must have the same type as the other side:
+///
+/// ```compile_fail,E0277
+/// # use howdah::{Column, Expression, Table, from};
+/// # #[derive(Clone, Copy)]
+/// # struct Users;
+/// # impl Table for Users {
+/// #     const NAME: &'static str = "users";
+/// # }
+/// let (_, u) = from(Users);
+/// let id: Column<i64> = Column::new(u, "id");
+/// id.eq("1");
+/// ```
+pub trait IntoExpression<T>: Erase {
+    /// Whether the value can be null.
+    type Null: Nullability;
+}
+
+impl<E: Expression> IntoExpression<E::Type> for E {
+    type Null = E::Null;
+}
+
+/// Turns a typed value into the untyped tree. No other crate can implement it, so none
+/// can implement [`Expression`] or [`IntoExpression`] either.
+pub trait Erase {
+    #[doc(hidden)]
+    fn erase(self) -> ErasedExpression;
+}
+
+impl<T, N> Erase for Column<T, N> {
+    fn erase(self) -> ErasedExpression {
+        ErasedExpression::Column(self.column)
+    }
+}
+
+impl<T, N> Erase for Expr<T, N> {
     fn erase(self) -> ErasedExpression {
         self.inner
     }

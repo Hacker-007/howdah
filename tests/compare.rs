@@ -9,7 +9,11 @@ fn filters_by_a_comparison() {
     q.filter(u.id().eq(u.manager_id()));
     assert_eq!(
         q.select(u.name()).to_sql().unwrap(),
-        r#"SELECT "users"."name" FROM "users" WHERE "users"."id" = "users"."manager_id""#
+        (
+            r#"SELECT "users"."name" FROM "users" WHERE "users"."id" = "users"."manager_id""#
+                .to_string(),
+            vec![]
+        )
     );
 }
 
@@ -30,7 +34,12 @@ fn renders_every_comparison() {
         q.filter(condition);
         assert_eq!(
             q.select(u.name()).to_sql().unwrap(),
-            format!(r#"SELECT "users"."name" FROM "users" WHERE "users"."id" {op} "users"."id""#)
+            (
+                format!(
+                    r#"SELECT "users"."name" FROM "users" WHERE "users"."id" {op} "users"."id""#
+                ),
+                vec![]
+            )
         );
     }
 }
@@ -50,7 +59,7 @@ fn nested_comparisons_are_parenthesized() {
     q.filter(u.active().eq(u.id().lt(u.manager_id())));
     assert_eq!(
         q.select(u.name()).to_sql().unwrap(),
-        r#"SELECT "users"."name" FROM "users" WHERE "users"."active" = ("users"."id" < "users"."manager_id")"#
+        (r#"SELECT "users"."name" FROM "users" WHERE "users"."active" = ("users"."id" < "users"."manager_id")"#.to_string(), vec![])
     );
 }
 

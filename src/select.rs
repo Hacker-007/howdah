@@ -3,10 +3,11 @@
 use std::marker::PhantomData;
 
 use crate::error::Error;
-use crate::expression::{Column, ErasedExpression, Expression};
+use crate::expression::{ErasedExpression, Expression};
 use crate::format;
-use crate::null::{NeverNull, Nullable};
+use crate::null::Nullability;
 use crate::table::SourceId;
+use crate::value::Value;
 
 /// A select statement. `R` is the type of each row it returns: `()` until
 /// [`select`](Select::select) chooses the columns.
@@ -33,8 +34,9 @@ impl Select {
 }
 
 impl<R> Select<R> {
-    /// The select with these columns: one column, or a tuple of them. The
-    /// select it is called on stays as it is, so one select can give several.
+    /// The select with these columns: a column or expression, or a tuple of
+    /// them. The select it is called on stays as it is, so one select can give
+    /// several.
     pub fn select<S: Selection>(&self, selection: S) -> Select<S::Row> {
         Select {
             source: self.source,
@@ -52,10 +54,11 @@ impl<R> Select<R> {
         self
     }
 
-    /// The statement's SQL.
+    /// The statement's SQL and the values of its parameters, in order: the
+    /// first is `$1`.
     ///
     /// Fails if a column's table is not part of the select.
-    pub fn to_sql(&self) -> Result<String, Error> {
+    pub fn to_sql(&self) -> Result<(String, Vec<Value>), Error> {
         format::select(self)
     }
 }
@@ -72,7 +75,8 @@ impl<R> Clone for Select<R> {
     }
 }
 
-/// What a select returns for each row: one column, or a tuple of them.
+/// What a select returns for each row: a column or expression, or a tuple of
+/// them.
 pub trait Selection {
     /// The Rust type of a row.
     type Row;
@@ -89,16 +93,8 @@ impl Selection for () {
     }
 }
 
-impl<T> Selection for Column<T, NeverNull> {
-    type Row = T;
-
-    fn components(self) -> Vec<ErasedExpression> {
-        vec![self.erase()]
-    }
-}
-
-impl<T> Selection for Column<T, Nullable> {
-    type Row = Option<T>;
+impl<E: Expression> Selection for E {
+    type Row = <E::Null as Nullability>::Read<E::Type>;
 
     fn components(self) -> Vec<ErasedExpression> {
         vec![self.erase()]

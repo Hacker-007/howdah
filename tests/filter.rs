@@ -9,7 +9,10 @@ fn filters_by_a_boolean_column() {
     q.filter(u.active());
     assert_eq!(
         q.select(u.name()).to_sql().unwrap(),
-        r#"SELECT "users"."name" FROM "users" WHERE "users"."active""#
+        (
+            r#"SELECT "users"."name" FROM "users" WHERE "users"."active""#.to_string(),
+            vec![]
+        )
     );
 }
 
@@ -19,7 +22,11 @@ fn every_filter_must_hold() {
     q.filter(u.active()).filter(u.verified());
     assert_eq!(
         q.select(u.name()).to_sql().unwrap(),
-        r#"SELECT "users"."name" FROM "users" WHERE "users"."active" AND "users"."verified""#
+        (
+            r#"SELECT "users"."name" FROM "users" WHERE "users"."active" AND "users"."verified""#
+                .to_string(),
+            vec![]
+        )
     );
 }
 
@@ -31,11 +38,14 @@ fn a_select_keeps_the_filters_it_was_made_with() {
     let active = q.select(u.name());
     assert_eq!(
         all.to_sql().unwrap(),
-        r#"SELECT "users"."name" FROM "users""#
+        (r#"SELECT "users"."name" FROM "users""#.to_string(), vec![])
     );
     assert_eq!(
         active.to_sql().unwrap(),
-        r#"SELECT "users"."name" FROM "users" WHERE "users"."active""#
+        (
+            r#"SELECT "users"."name" FROM "users" WHERE "users"."active""#.to_string(),
+            vec![]
+        )
     );
 }
 

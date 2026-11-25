@@ -1,20 +1,26 @@
 mod schema;
 
-use howdah::{Column, Error, Handle, Select, Table, from};
+use howdah::{Column, Error, Expression, Handle, Select, Table, Value, from};
 use schema::*;
 
 #[test]
 fn selects_no_columns_until_chosen() {
     let (q, _) = from(Users);
     let _: &Select<()> = &q;
-    assert_eq!(q.to_sql().unwrap(), r#"SELECT FROM "users""#);
+    assert_eq!(
+        q.to_sql().unwrap(),
+        (r#"SELECT FROM "users""#.to_string(), vec![])
+    );
 }
 
 #[test]
 fn selects_a_column() {
     let (q, u) = from(Users);
     let s: Select<String> = q.select(u.name());
-    assert_eq!(s.to_sql().unwrap(), r#"SELECT "users"."name" FROM "users""#);
+    assert_eq!(
+        s.to_sql().unwrap(),
+        (r#"SELECT "users"."name" FROM "users""#.to_string(), vec![])
+    );
 }
 
 #[test]
@@ -23,7 +29,10 @@ fn selects_a_tuple_of_columns() {
     let s: Select<(i64, String, bool)> = q.select((u.id(), u.name(), u.active()));
     assert_eq!(
         s.to_sql().unwrap(),
-        r#"SELECT "users"."id", "users"."name", "users"."active" FROM "users""#
+        (
+            r#"SELECT "users"."id", "users"."name", "users"."active" FROM "users""#.to_string(),
+            vec![]
+        )
     );
 }
 
@@ -33,7 +42,10 @@ fn tuples_nest() {
     let s: Select<((i64, String), bool)> = q.select(((u.id(), u.name()), u.active()));
     assert_eq!(
         s.to_sql().unwrap(),
-        r#"SELECT "users"."id", "users"."name", "users"."active" FROM "users""#
+        (
+            r#"SELECT "users"."id", "users"."name", "users"."active" FROM "users""#.to_string(),
+            vec![]
+        )
     );
 }
 
@@ -43,7 +55,10 @@ fn nullable_columns_read_as_option() {
     let s: Select<(String, Option<i64>)> = q.select((u.name(), u.manager_id()));
     assert_eq!(
         s.to_sql().unwrap(),
-        r#"SELECT "users"."name", "users"."manager_id" FROM "users""#
+        (
+            r#"SELECT "users"."name", "users"."manager_id" FROM "users""#.to_string(),
+            vec![]
+        )
     );
 }
 
@@ -52,10 +67,13 @@ fn one_query_gives_several_selects() {
     let (q, u) = from(Users);
     let ids: Select<i64> = q.select(u.id());
     let emails: Select<String> = q.select(u.email());
-    assert_eq!(ids.to_sql().unwrap(), r#"SELECT "users"."id" FROM "users""#);
+    assert_eq!(
+        ids.to_sql().unwrap(),
+        (r#"SELECT "users"."id" FROM "users""#.to_string(), vec![])
+    );
     assert_eq!(
         emails.to_sql().unwrap(),
-        r#"SELECT "users"."email" FROM "users""#
+        (r#"SELECT "users"."email" FROM "users""#.to_string(), vec![])
     );
 }
 
@@ -91,7 +109,10 @@ fn quotes_in_names_are_escaped() {
     let s = q.select(c);
     assert_eq!(
         s.to_sql().unwrap(),
-        r#"SELECT "a ""b"""."c""d" FROM "a ""b""""#
+        (
+            r#"SELECT "a ""b"""."c""d" FROM "a ""b""""#.to_string(),
+            vec![]
+        )
     );
 }
 
@@ -104,4 +125,45 @@ fn values_can_move_between_threads() {
     assert_send_sync::<Handle<Users>>();
     assert_send_sync::<Column<String>>();
     assert_send_sync::<Error>();
+}
+
+#[test]
+fn selects_an_expression() {
+    let (q, u) = from(Users);
+    let s: Select<bool> = q.select(u.id().eq(1));
+    assert_eq!(
+        s.to_sql().unwrap(),
+        (
+            r#"SELECT "users"."id" = $1 FROM "users""#.to_string(),
+            vec![Value::BigInt(1)]
+        )
+    );
+}
+
+#[test]
+fn a_nullable_expression_reads_as_option() {
+    let (q, u) = from(Users);
+    let s: Select<(String, Option<bool>)> = q.select((u.name(), u.manager_id().eq(u.id())));
+    assert_eq!(
+        s.to_sql().unwrap(),
+        (
+            r#"SELECT "users"."name", "users"."manager_id" = "users"."id" FROM "users""#
+                .to_string(),
+            vec![]
+        )
+    );
+}
+
+#[test]
+fn parameters_in_the_select_list_come_before_filters() {
+    let (mut q, u) = from(Users);
+    q.filter(u.name().eq("Ada"));
+    let s: Select<bool> = q.select(u.id().gt(1));
+    assert_eq!(
+        s.to_sql().unwrap(),
+        (
+            r#"SELECT "users"."id" > $1 FROM "users" WHERE "users"."name" = $2"#.to_string(),
+            vec![Value::BigInt(1), Value::Text("Ada".to_string())]
+        )
+    );
 }

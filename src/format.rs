@@ -4,18 +4,24 @@ use crate::error::Error;
 use crate::expression::{CompareOperation, ErasedExpression};
 use crate::select::Select;
 use crate::table::SourceId;
+use crate::value::Value;
 
 struct SqlFormatter {
     /// The one table a column may come from.
     scope: SourceId,
+    /// The values of `$1`, `$2`, ... in order.
+    parameters: Vec<Value>,
 }
 
 impl SqlFormatter {
     fn new(scope: SourceId) -> Self {
-        Self { scope }
+        Self {
+            scope,
+            parameters: Vec::new(),
+        }
     }
 
-    fn expression(&self, expression: &ErasedExpression) -> Result<String, Error> {
+    fn expression(&mut self, expression: &ErasedExpression) -> Result<String, Error> {
         let fragment = match expression {
             ErasedExpression::Column(column) if column.source != self.scope => {
                 return Err(Error::NotInScope {
@@ -42,6 +48,10 @@ impl SqlFormatter {
 
                 format!("{} {op} {}", self.operand(left)?, self.operand(right)?)
             }
+            ErasedExpression::Value(value) => {
+                self.parameters.push(value.clone());
+                format!("${}", self.parameters.len())
+            }
         };
 
         Ok(fragment)
@@ -51,18 +61,18 @@ impl SqlFormatter {
         format!("\"{}\"", name.replace('"', "\"\""))
     }
 
-    /// An operand of an operator, in parentheses unless it is a column. SQL
-    /// does not allow `a = b = c`.
-    fn operand(&self, expression: &ErasedExpression) -> Result<String, Error> {
+    /// An operand of an operator, in parentheses if it is an operator itself.
+    /// SQL does not allow `a = b = c`.
+    fn operand(&mut self, expression: &ErasedExpression) -> Result<String, Error> {
         let fragment = self.expression(expression)?;
         match expression {
-            ErasedExpression::Column(_) => Ok(fragment),
-            _ => Ok(format!("({fragment})")),
+            ErasedExpression::Compare { .. } => Ok(format!("({fragment})")),
+            _ => Ok(fragment),
         }
     }
 
     /// Each expression's SQL, separated by `separator`.
-    fn list(&self, expressions: &[ErasedExpression], separator: &str) -> Result<String, Error> {
+    fn list(&mut self, expressions: &[ErasedExpression], separator: &str) -> Result<String, Error> {
         let parts = expressions
             .iter()
             .map(|expression| self.expression(expression))
@@ -72,8 +82,8 @@ impl SqlFormatter {
     }
 }
 
-pub(crate) fn select<R>(select: &Select<R>) -> Result<String, Error> {
-    let f = SqlFormatter::new(select.source);
+pub(crate) fn select<R>(select: &Select<R>) -> Result<(String, Vec<Value>), Error> {
+    let mut f = SqlFormatter::new(select.source);
     let mut sql = "SELECT".to_string();
     if !select.columns.is_empty() {
         sql.push(' ');
@@ -89,5 +99,5 @@ pub(crate) fn select<R>(select: &Select<R>) -> Result<String, Error> {
             .map(|fragment| sql.push_str(&fragment))?;
     }
 
-    Ok(sql)
+    Ok((sql, f.parameters))
 }
