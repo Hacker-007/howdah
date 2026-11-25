@@ -3,10 +3,10 @@
 use std::marker::PhantomData;
 
 use crate::error::Error;
-use crate::expression::{ErasedExpression, Expression};
+use crate::expression::{ErasedExpression, Expression, Order};
 use crate::format;
-use crate::null::Nullability;
-use crate::table::SourceId;
+use crate::null::{Nullability, Nullable};
+use crate::table::{Handle, SourceId, Table};
 use crate::value::Value;
 
 /// A select statement. `R` is the type of each row it returns: `()` until
@@ -18,7 +18,26 @@ pub struct Select<R = ()> {
     pub(crate) from: &'static str,
     pub(crate) columns: Vec<ErasedExpression>,
     pub(crate) filters: Vec<ErasedExpression>,
+    pub(crate) orders: Vec<Order>,
+    pub(crate) limit: Option<u64>,
+    pub(crate) offset: Option<u64>,
+    pub(crate) joins: Vec<Join>,
     _row: PhantomData<fn() -> R>,
+}
+
+/// A join: another use of a table, and the condition rows must match.
+#[derive(Debug, Clone)]
+pub(crate) struct Join {
+    pub(crate) source: SourceId,
+    pub(crate) table: &'static str,
+    pub(crate) kind: JoinKind,
+    pub(crate) on: ErasedExpression,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum JoinKind {
+    Inner,
+    Left,
 }
 
 impl Select {
@@ -28,6 +47,10 @@ impl Select {
             from,
             columns: Vec::new(),
             filters: Vec::new(),
+            orders: Vec::new(),
+            limit: None,
+            offset: None,
+            joins: Vec::new(),
             _row: PhantomData,
         }
     }
@@ -43,6 +66,10 @@ impl<R> Select<R> {
             from: self.from,
             columns: selection.components(),
             filters: self.filters.clone(),
+            orders: self.orders.clone(),
+            limit: self.limit,
+            offset: self.offset,
+            joins: self.joins.clone(),
             _row: PhantomData,
         }
     }
@@ -52,6 +79,64 @@ impl<R> Select<R> {
     pub fn filter<E: Expression<Type = bool>>(&mut self, condition: E) -> &mut Self {
         self.filters.push(condition.erase());
         self
+    }
+
+    /// Orders rows by this expression, then by each later `order_by`:
+    /// `q.order_by(u.name().asc())`.
+    pub fn order_by(&mut self, order: Order) -> &mut Self {
+        self.orders.push(order);
+        self
+    }
+
+    /// Returns at most `limit` rows. Calling it again replaces the earlier
+    /// limit.
+    pub fn limit(&mut self, limit: u64) -> &mut Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    /// Skips `offset` rows. Calling it again replaces the earlier offset.
+    pub fn offset(&mut self, offset: u64) -> &mut Self {
+        self.offset = Some(offset);
+        self
+    }
+
+    /// Joins `table`, keeping only rows that match `on`. The condition may use
+    /// the handles of the select and of every earlier join. Returns the
+    /// handle of this use of the table, so the same table can be joined more
+    /// than once.
+    pub fn join<T: Table, E: Expression<Type = bool>>(
+        &mut self,
+        table: T,
+        on: impl FnOnce(Handle<T>) -> E,
+    ) -> Handle<T> {
+        self.join_with(table, JoinKind::Inner, on)
+    }
+
+    /// Left-joins `table`, keeping every row whether or not it matches `on`.
+    /// Columns read through the returned handle are nullable.
+    pub fn left_join<T: Table, E: Expression<Type = bool>>(
+        &mut self,
+        table: T,
+        on: impl FnOnce(Handle<T, Nullable>) -> E,
+    ) -> Handle<T, Nullable> {
+        self.join_with(table, JoinKind::Left, on)
+    }
+
+    fn join_with<T: Table, N: Nullability, E: Expression<Type = bool>>(
+        &mut self,
+        _table: T,
+        kind: JoinKind,
+        on: impl FnOnce(Handle<T, N>) -> E,
+    ) -> Handle<T, N> {
+        let handle = Handle::new();
+        self.joins.push(Join {
+            source: handle.source(),
+            table: T::NAME,
+            kind,
+            on: on(handle).erase(),
+        });
+        handle
     }
 
     /// The statement's SQL and the values of its parameters, in order: the
@@ -70,6 +155,10 @@ impl<R> Clone for Select<R> {
             from: self.from,
             columns: self.columns.clone(),
             filters: self.filters.clone(),
+            orders: self.orders.clone(),
+            limit: self.limit,
+            offset: self.offset,
+            joins: self.joins.clone(),
             _row: PhantomData,
         }
     }

@@ -3,6 +3,8 @@
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::null::NeverNull;
+
 /// A table in the database.
 pub trait Table: Copy + 'static {
     /// The table's name in the database.
@@ -31,16 +33,19 @@ impl SourceId {
     }
 }
 
-/// One use of the table `T` in a statement, made by [`from`](crate::from).
-/// Its columns come from the table's column trait.
+/// One use of the table `T` in a statement, made by [`from`](crate::from),
+/// [`Select::join`](crate::Select::join) and
+/// [`Select::left_join`](crate::Select::left_join). Its columns come from the
+/// table's column trait. `N` is [`Nullable`](crate::Nullable) for the handle
+/// of a left join, so every column read through it is nullable.
 ///
 /// A handle has no methods of its own, so it cannot clash with a column name.
-pub struct Handle<T> {
+pub struct Handle<T, N = NeverNull> {
     source: SourceId,
-    _table: PhantomData<fn() -> T>,
+    _table: PhantomData<fn() -> (T, N)>,
 }
 
-impl<T> Handle<T> {
+impl<T, N> Handle<T, N> {
     pub(crate) fn new() -> Self {
         Self {
             source: SourceId::next(),
@@ -53,10 +58,10 @@ impl<T> Handle<T> {
     }
 }
 
-impl<T> Clone for Handle<T> {
+impl<T, N> Clone for Handle<T, N> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T> Copy for Handle<T> {}
+impl<T, N> Copy for Handle<T, N> {}

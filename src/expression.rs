@@ -1,6 +1,7 @@
 //! Columns, expressions and the untyped tree they become.
 
 use std::marker::PhantomData;
+use std::ops::{BitAnd, BitOr, Not};
 
 use crate::null::{NeverNull, Nullability};
 use crate::table::{Handle, SourceId, Table};
@@ -38,6 +39,14 @@ pub enum ErasedExpression {
         right: Box<ErasedExpression>,
     },
     Value(Value),
+    Logic {
+        op: LogicOperation,
+        left: Box<ErasedExpression>,
+        right: Box<ErasedExpression>,
+    },
+    Not(Box<ErasedExpression>),
+    IsNull(Box<ErasedExpression>),
+    IsNotNull(Box<ErasedExpression>),
 }
 
 /// A column of one [`Handle`], holding values of type `T`. `N` is
@@ -49,7 +58,7 @@ pub struct Column<T, N = NeverNull> {
 
 impl<T, N> Column<T, N> {
     #[doc(hidden)]
-    pub fn new<S: Table>(handle: Handle<S>, name: &'static str) -> Self {
+    pub fn new<S: Table, M>(handle: Handle<S, M>, name: &'static str) -> Self {
         Self {
             column: ColumnRef {
                 source: handle.source(),
@@ -88,6 +97,28 @@ pub enum CompareOperation {
     GreaterThanEqual,
 }
 
+/// A logical operator joining two boolean expressions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogicOperation {
+    And,
+    Or,
+}
+
+/// Which way to order rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Asc,
+    Desc,
+}
+
+/// An expression to order rows by, with its direction. Made by
+/// [`Expression::asc`] and [`Expression::desc`].
+#[derive(Debug, Clone)]
+pub struct Order {
+    pub(crate) expression: ErasedExpression,
+    pub(crate) direction: Direction,
+}
+
 /// A value in SQL: a column, or an expression built from them. Values of type
 /// `Type` that are null when `Null` is [`Nullable`](crate::Nullable).
 ///
@@ -104,6 +135,22 @@ pub enum CompareOperation {
 /// let id: Column<i64> = Column::new(u, "id");
 /// let name: Column<String> = Column::new(u, "name");
 /// id.eq(name);
+/// ```
+///
+/// `&`, `|` and `!` are SQL's `AND`, `OR` and `NOT`, and work only on boolean
+/// expressions:
+///
+/// ```compile_fail,E0369
+/// # use howdah::{Column, Table, from};
+/// # #[derive(Clone, Copy)]
+/// # struct Users;
+/// # impl Table for Users {
+/// #     const NAME: &'static str = "users";
+/// # }
+/// let (_, u) = from(Users);
+/// let id: Column<i64> = Column::new(u, "id");
+/// let active: Column<bool> = Column::new(u, "active");
+/// let _ = id & active;
 /// ```
 pub trait Expression: Erase + Sized {
     /// The Rust type of the value.
@@ -183,7 +230,88 @@ pub trait Expression: Erase + Sized {
             right: Box::new(other.erase()),
         })
     }
+
+    /// Order rows by this expression, ascending. Used with
+    /// [`Select::order_by`](crate::Select::order_by).
+    fn asc(self) -> Order {
+        Order {
+            expression: self.erase(),
+            direction: Direction::Asc,
+        }
+    }
+
+    /// Order rows by this expression, descending. Used with
+    /// [`Select::order_by`](crate::Select::order_by).
+    fn desc(self) -> Order {
+        Order {
+            expression: self.erase(),
+            direction: Direction::Desc,
+        }
+    }
+
+    /// `self IS NULL`. Never null itself.
+    #[expect(
+        clippy::wrong_self_convention,
+        reason = "builds SQL like the other methods; it does not test `self`"
+    )]
+    fn is_null(self) -> Expr<bool> {
+        Expr::new(ErasedExpression::IsNull(Box::new(self.erase())))
+    }
+
+    /// `self IS NOT NULL`. Never null itself.
+    #[expect(
+        clippy::wrong_self_convention,
+        reason = "builds SQL like the other methods; it does not test `self`"
+    )]
+    fn is_not_null(self) -> Expr<bool> {
+        Expr::new(ErasedExpression::IsNotNull(Box::new(self.erase())))
+    }
 }
+
+/// `&`, `|` and `!` on boolean columns and expressions. The result is
+/// nullable if an operand is.
+macro_rules! logic_operators {
+    ($($type:ident),*) => {
+        $(
+            /// `self AND other`.
+            impl<N: Nullability, E: IntoExpression<bool>> BitAnd<E> for $type<bool, N> {
+                type Output = Expr<bool, N::Or<E::Null>>;
+
+                fn bitand(self, other: E) -> Self::Output {
+                    Expr::new(ErasedExpression::Logic {
+                        op: LogicOperation::And,
+                        left: Box::new(self.erase()),
+                        right: Box::new(other.erase()),
+                    })
+                }
+            }
+
+            /// `self OR other`.
+            impl<N: Nullability, E: IntoExpression<bool>> BitOr<E> for $type<bool, N> {
+                type Output = Expr<bool, N::Or<E::Null>>;
+
+                fn bitor(self, other: E) -> Self::Output {
+                    Expr::new(ErasedExpression::Logic {
+                        op: LogicOperation::Or,
+                        left: Box::new(self.erase()),
+                        right: Box::new(other.erase()),
+                    })
+                }
+            }
+
+            /// `NOT self`.
+            impl<N: Nullability> Not for $type<bool, N> {
+                type Output = Expr<bool, N>;
+
+                fn not(self) -> Self::Output {
+                    Expr::new(ErasedExpression::Not(Box::new(self.erase())))
+                }
+            }
+        )*
+    };
+}
+
+logic_operators!(Column, Expr);
 
 impl<T, N: Nullability> Expression for Column<T, N> {
     type Type = T;
