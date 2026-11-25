@@ -1,13 +1,15 @@
 //! Typed Postgres queries for Rust.
 
 mod error;
-mod expr;
-mod render;
+mod expression;
+mod format;
+mod null;
 mod select;
 mod table;
 
 pub use error::Error;
-pub use expr::{Column, NeverNull, Nullable};
+pub use expression::{Column, Expr, Expression};
+pub use null::{NeverNull, Nullability, Nullable};
 pub use select::{Select, Selection};
 pub use table::{Handle, Table};
 

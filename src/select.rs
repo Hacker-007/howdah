@@ -3,8 +3,9 @@
 use std::marker::PhantomData;
 
 use crate::error::Error;
-use crate::expr::{Column, NeverNull, Node, Nullable};
-use crate::render;
+use crate::expression::{Column, ErasedExpression, Expression};
+use crate::format;
+use crate::null::{NeverNull, Nullable};
 use crate::table::SourceId;
 
 /// A select statement. `R` is the type of each row it returns: `()` until
@@ -14,8 +15,8 @@ use crate::table::SourceId;
 pub struct Select<R = ()> {
     pub(crate) source: SourceId,
     pub(crate) from: &'static str,
-    pub(crate) columns: Vec<Node>,
-    pub(crate) filters: Vec<Node>,
+    pub(crate) columns: Vec<ErasedExpression>,
+    pub(crate) filters: Vec<ErasedExpression>,
     _row: PhantomData<fn() -> R>,
 }
 
@@ -34,14 +35,11 @@ impl Select {
 impl<R> Select<R> {
     /// The select with these columns: one column, or a tuple of them. The
     /// select it is called on stays as it is, so one select can give several.
-    pub fn select<S: Selection>(&self, columns: S) -> Select<S::Row> {
-        let mut nodes = Vec::new();
-        columns.push_columns(&mut nodes);
-
+    pub fn select<S: Selection>(&self, selection: S) -> Select<S::Row> {
         Select {
             source: self.source,
             from: self.from,
-            columns: nodes,
+            columns: selection.components(),
             filters: self.filters.clone(),
             _row: PhantomData,
         }
@@ -49,8 +47,8 @@ impl<R> Select<R> {
 
     /// Keeps only the rows where `condition` is true. A row where it is null
     /// is left out, as in SQL. Every filter must hold.
-    pub fn filter<N>(&mut self, condition: Column<bool, N>) -> &mut Self {
-        self.filters.push(condition.node());
+    pub fn filter<E: Expression<Type = bool>>(&mut self, condition: E) -> &mut Self {
+        self.filters.push(condition.erase());
         self
     }
 
@@ -58,7 +56,7 @@ impl<R> Select<R> {
     ///
     /// Fails if a column's table is not part of the select.
     pub fn to_sql(&self) -> Result<String, Error> {
-        render::select(self)
+        format::select(self)
     }
 }
 
@@ -80,22 +78,30 @@ pub trait Selection {
     type Row;
 
     #[doc(hidden)]
-    fn push_columns(self, into: &mut Vec<Node>);
+    fn components(self) -> Vec<ErasedExpression>;
+}
+
+impl Selection for () {
+    type Row = ();
+
+    fn components(self) -> Vec<ErasedExpression> {
+        vec![]
+    }
 }
 
 impl<T> Selection for Column<T, NeverNull> {
     type Row = T;
 
-    fn push_columns(self, into: &mut Vec<Node>) {
-        into.push(self.node());
+    fn components(self) -> Vec<ErasedExpression> {
+        vec![self.erase()]
     }
 }
 
 impl<T> Selection for Column<T, Nullable> {
     type Row = Option<T>;
 
-    fn push_columns(self, into: &mut Vec<Node>) {
-        into.push(self.node());
+    fn components(self) -> Vec<ErasedExpression> {
+        vec![self.erase()]
     }
 }
 
@@ -106,9 +112,11 @@ macro_rules! tuples {
                 type Row = ($($name::Row,)+);
 
                 #[allow(non_snake_case)]
-                fn push_columns(self, into: &mut Vec<Node>) {
+                fn components(self) -> Vec<ErasedExpression> {
+                    let mut components = vec![];
                     let ($($name,)+) = self;
-                    $($name.push_columns(into);)+
+                    $(components.extend($name.components());)+
+                    components
                 }
             }
         )*
