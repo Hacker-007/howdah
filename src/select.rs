@@ -22,6 +22,8 @@ pub struct Select<R = ()> {
     pub(crate) limit: Option<u64>,
     pub(crate) offset: Option<u64>,
     pub(crate) joins: Vec<Join>,
+    /// `DISTINCT` if empty, `DISTINCT ON` these expressions if not.
+    pub(crate) distinct: Option<Vec<ErasedExpression>>,
     _row: PhantomData<fn() -> R>,
 }
 
@@ -51,6 +53,7 @@ impl Select {
             limit: None,
             offset: None,
             joins: Vec::new(),
+            distinct: None,
             _row: PhantomData,
         }
     }
@@ -70,6 +73,7 @@ impl<R> Select<R> {
             limit: self.limit,
             offset: self.offset,
             joins: self.joins.clone(),
+            distinct: self.distinct.clone(),
             _row: PhantomData,
         }
     }
@@ -98,6 +102,29 @@ impl<R> Select<R> {
     /// Skips `offset` rows. Calling it again replaces the earlier offset.
     pub fn offset(&mut self, offset: u64) -> &mut Self {
         self.offset = Some(offset);
+        self
+    }
+
+    /// Leaves out duplicate rows. Replaces any earlier
+    /// [`distinct_on`](Select::distinct_on).
+    ///
+    /// Postgres requires every [`order_by`](Select::order_by) expression to be
+    /// selected.
+    pub fn distinct(&mut self) -> &mut Self {
+        self.distinct = Some(Vec::new());
+        self
+    }
+
+    /// Keeps only the first row of each set of rows that are equal in
+    /// `expression` and in each later `distinct_on`. Replaces an earlier
+    /// [`distinct`](Select::distinct).
+    ///
+    /// [`order_by`](Select::order_by) decides which row is first. Postgres
+    /// requires the first orders to be the `distinct_on` expressions.
+    pub fn distinct_on<E: Expression>(&mut self, expression: E) -> &mut Self {
+        self.distinct
+            .get_or_insert_default()
+            .push(expression.erase());
         self
     }
 
@@ -159,6 +186,7 @@ impl<R> Clone for Select<R> {
             limit: self.limit,
             offset: self.offset,
             joins: self.joins.clone(),
+            distinct: self.distinct.clone(),
             _row: PhantomData,
         }
     }

@@ -1,7 +1,7 @@
 //! Columns, expressions and the untyped tree they become.
 
 use std::marker::PhantomData;
-use std::ops::{BitAnd, BitOr, Not};
+use std::ops::{Add, BitAnd, BitOr, Div, Mul, Not, Rem, Sub};
 
 use crate::null::{NeverNull, Nullability};
 use crate::table::{Handle, SourceId, Table};
@@ -9,6 +9,36 @@ use crate::value::Value;
 
 /// An expression holding values of type `T`, such as a comparison. `N` is
 /// [`Nullable`](crate::Nullable) if it can be null.
+///
+/// Arithmetic operators work on numeric columns and expressions. Both sides
+/// must have the same type:
+///
+/// ```compile_fail,E0277
+/// # use howdah::{Column, Table, from};
+/// # #[derive(Clone, Copy)]
+/// # struct Users;
+/// # impl Table for Users {
+/// #     const NAME: &'static str = "users";
+/// # }
+/// let (_, u) = from(Users);
+/// let id: Column<i64> = Column::new(u, "id");
+/// let small: Column<i32> = Column::new(u, "small");
+/// let _ = id + small;
+/// ```
+///
+/// `%` needs integers, as in Postgres:
+///
+/// ```compile_fail,E0277
+/// # use howdah::{Column, Table, from};
+/// # #[derive(Clone, Copy)]
+/// # struct Users;
+/// # impl Table for Users {
+/// #     const NAME: &'static str = "users";
+/// # }
+/// let (_, u) = from(Users);
+/// let total: Column<f64> = Column::new(u, "total");
+/// let _ = total % 2.0;
+/// ```
 pub struct Expr<T, N = NeverNull> {
     inner: ErasedExpression,
     _type: PhantomData<fn() -> (T, N)>,
@@ -47,6 +77,11 @@ pub enum ErasedExpression {
     Not(Box<ErasedExpression>),
     IsNull(Box<ErasedExpression>),
     IsNotNull(Box<ErasedExpression>),
+    Arithmetic {
+        op: ArithmeticOperation,
+        left: Box<ErasedExpression>,
+        right: Box<ErasedExpression>,
+    },
 }
 
 /// A column of one [`Handle`], holding values of type `T`. `N` is
@@ -104,6 +139,16 @@ pub enum LogicOperation {
     Or,
 }
 
+/// An arithmetic operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithmeticOperation {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+}
+
 /// Which way to order rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -117,6 +162,29 @@ pub enum Direction {
 pub struct Order {
     pub(crate) expression: ErasedExpression,
     pub(crate) direction: Direction,
+}
+
+/// What `+` works on: the numeric types. Dates and intervals will join it.
+pub trait Additive {}
+
+/// What `-`, `*` and `/` work on: the numeric types.
+pub trait Numeric {}
+
+/// What `%` works on: the integer types. Postgres has no `%` for reals.
+pub trait Remainder {}
+
+macro_rules! markers {
+    ($($marker:ident: $($type:ty),*;)*) => {
+        $($(
+            impl $marker for $type {}
+        )*)*
+    };
+}
+
+markers! {
+    Additive: i16, i32, i64, f32, f64;
+    Numeric: i16, i32, i64, f32, f64;
+    Remainder: i16, i32, i64;
 }
 
 /// A value in SQL: a column, or an expression built from them. Values of type
@@ -312,6 +380,47 @@ macro_rules! logic_operators {
 }
 
 logic_operators!(Column, Expr);
+
+/// `+` on [`Additive`] columns and expressions, `-`, `*` and `/` on
+/// [`Numeric`] ones and `%` on [`Remainder`] ones. Both sides must have the
+/// same type. The result is nullable if an operand is.
+macro_rules! arithmetic {
+    ($($op:ident :: $method:ident => $operation:ident, $marker:ident);* $(;)?) => {
+        $(
+            impl<T: $marker, N: Nullability, E: IntoExpression<T>> $op<E> for Column<T, N> {
+                type Output = Expr<T, N::Or<E::Null>>;
+
+                fn $method(self, other: E) -> Self::Output {
+                    Expr::new(ErasedExpression::Arithmetic {
+                        op: ArithmeticOperation::$operation,
+                        left: Box::new(self.erase()),
+                        right: Box::new(other.erase()),
+                    })
+                }
+            }
+
+            impl<T: $marker, N: Nullability, E: IntoExpression<T>> $op<E> for Expr<T, N> {
+                type Output = Expr<T, N::Or<E::Null>>;
+
+                fn $method(self, other: E) -> Self::Output {
+                    Expr::new(ErasedExpression::Arithmetic {
+                        op: ArithmeticOperation::$operation,
+                        left: Box::new(self.erase()),
+                        right: Box::new(other.erase()),
+                    })
+                }
+            }
+        )*
+    };
+}
+
+arithmetic! {
+    Add::add => Add, Additive;
+    Sub::sub => Subtract, Numeric;
+    Mul::mul => Multiply, Numeric;
+    Div::div => Divide, Numeric;
+    Rem::rem => Remainder, Remainder;
+}
 
 impl<T, N: Nullability> Expression for Column<T, N> {
     type Type = T;

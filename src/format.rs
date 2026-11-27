@@ -1,7 +1,9 @@
 //! Writing SQL. Scope is checked while writing.
 
 use crate::error::Error;
-use crate::expression::{CompareOperation, Direction, ErasedExpression, LogicOperation};
+use crate::expression::{
+    ArithmeticOperation, CompareOperation, Direction, ErasedExpression, LogicOperation,
+};
 use crate::select::{JoinKind, Select};
 use crate::table::SourceId;
 use crate::value::Value;
@@ -14,6 +16,8 @@ enum Precedence {
     Not,
     Is,
     Comparison,
+    Additive,
+    Multiplicative,
     /// A column or parameter, which never needs parentheses.
     Atom,
 }
@@ -32,6 +36,11 @@ impl Precedence {
             ErasedExpression::Not(_) => Self::Not,
             ErasedExpression::IsNull(_) | ErasedExpression::IsNotNull(_) => Self::Is,
             ErasedExpression::Compare { .. } => Self::Comparison,
+            ErasedExpression::Arithmetic {
+                op: ArithmeticOperation::Add | ArithmeticOperation::Subtract,
+                ..
+            } => Self::Additive,
+            ErasedExpression::Arithmetic { .. } => Self::Multiplicative,
             ErasedExpression::Column(_) | ErasedExpression::Value(_) => Self::Atom,
         }
     }
@@ -81,10 +90,12 @@ impl SqlFormatter {
                     CompareOperation::GreaterThanEqual => ">=",
                 };
 
+                // SQL does not allow `a = b = c`, so only tighter operators
+                // and atoms go bare.
                 format!(
                     "{} {op} {}",
-                    self.operand(left, Precedence::Atom)?,
-                    self.operand(right, Precedence::Atom)?
+                    self.operand(left, Precedence::Additive)?,
+                    self.operand(right, Precedence::Additive)?
                 )
             }
             ErasedExpression::Value(value) => {
@@ -113,6 +124,35 @@ impl SqlFormatter {
             }
             ErasedExpression::IsNotNull(operand) => {
                 format!("{} IS NOT NULL", self.operand(operand, Precedence::Atom)?)
+            }
+            ErasedExpression::Arithmetic { op, left, right } => {
+                // Postgres groups `a - b - c` from the left, so a right
+                // operand of the same precedence keeps its parentheses. Even
+                // `a + (b + c)` does: regrouping changes float rounding and
+                // which sums overflow.
+                let (symbol, left_precedence, right_precedence) = match op {
+                    ArithmeticOperation::Add => {
+                        ("+", Precedence::Additive, Precedence::Multiplicative)
+                    }
+                    ArithmeticOperation::Subtract => {
+                        ("-", Precedence::Additive, Precedence::Multiplicative)
+                    }
+                    ArithmeticOperation::Multiply => {
+                        ("*", Precedence::Multiplicative, Precedence::Atom)
+                    }
+                    ArithmeticOperation::Divide => {
+                        ("/", Precedence::Multiplicative, Precedence::Atom)
+                    }
+                    ArithmeticOperation::Remainder => {
+                        ("%", Precedence::Multiplicative, Precedence::Atom)
+                    }
+                };
+
+                format!(
+                    "{} {symbol} {}",
+                    self.operand(left, left_precedence)?,
+                    self.operand(right, right_precedence)?
+                )
             }
         };
 
@@ -187,6 +227,17 @@ pub(crate) fn select<R>(select: &Select<R>) -> Result<(String, Vec<Value>), Erro
         parameters: Vec::new(),
     };
     let mut sql = "SELECT".to_string();
+    match &select.distinct {
+        Some(expressions) if expressions.is_empty() => sql.push_str(" DISTINCT"),
+        Some(expressions) => {
+            sql.push_str(" DISTINCT ON (");
+            f.list(expressions, ", ", Precedence::Or)
+                .map(|fragment| sql.push_str(&fragment))?;
+            sql.push(')');
+        }
+        None => {}
+    }
+
     if !select.columns.is_empty() {
         sql.push(' ');
         f.list(&select.columns, ", ", Precedence::Or)

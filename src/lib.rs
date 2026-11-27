@@ -9,7 +9,9 @@ mod table;
 mod value;
 
 pub use error::Error;
-pub use expression::{Column, Expr, Expression, IntoExpression, Order};
+pub use expression::{
+    Additive, Column, Expr, Expression, IntoExpression, Numeric, Order, Remainder,
+};
 pub use null::{NeverNull, Nullability, Nullable};
 pub use select::{Select, Selection};
 pub use table::{Handle, Table};
